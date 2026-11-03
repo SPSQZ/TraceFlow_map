@@ -1,0 +1,14 @@
+{
+  "name": "traceflow-sample-store",
+  "version": "1.0.0",
+  "description": "E-Commerce Cloud Application Architecture Sample",
+  "main": "server/index.ts",
+  "dependencies": {
+    "express": "^4.18.2",
+    "react": "^18.2.0",
+    "prisma": "^5.0.0",
+    "jsonwebtoken": "^9.0.0",
+    "tailwindcss": "^3.3.0"
+  }
+}
+
