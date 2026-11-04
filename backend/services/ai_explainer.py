@@ -1,7 +1,7 @@
 import json
 import httpx
 from typing import Dict, Any, List
-from ..config import GEMINI_API_KEY
+from ..config import AI_PROVIDER, OLLAMA_BASE_URL, OLLAMA_MODEL, GEMINI_API_KEY
 from ..models.schemas import FileMeta, SymbolInfo
 
 class AIExplainer:
@@ -15,7 +15,7 @@ class AIExplainer:
     ) -> Dict[str, str]:
         """
         Deterministic, code-grounded architectural summary fallback.
-        Ensures 100% demo availability without an external API key.
+        Ensures 100% demo availability without an external API or local LLM.
         """
         stack_str = ", ".join(stack) if stack else "modern web technologies"
         patterns_str = ", ".join(patterns) if patterns else "modular design"
@@ -50,39 +50,42 @@ class AIExplainer:
         }
 
     @staticmethod
-    async def explain_repository(
-        repo_name: str,
-        stack: List[str],
-        patterns: List[str],
-        entry_points: List[str],
-        files: List[FileMeta]
-    ) -> Dict[str, str]:
-        """
-        Uses Gemini if configured, else returns heuristic summaries.
-        """
+    async def _query_ollama(prompt: str) -> Dict[str, str] | None:
+        """Queries local Ollama instance (e.g. qwen2.5-coder:7b)."""
+        url = f"{OLLAMA_BASE_URL}/api/generate"
+        payload = {
+            "model": OLLAMA_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.2}
+        }
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    text = res.json().get("response", "")
+                    parsed = json.loads(text)
+                    if isinstance(parsed, dict) and "intermediate" in parsed:
+                        return {
+                            "beginner": parsed.get("beginner", ""),
+                            "intermediate": parsed.get("intermediate", ""),
+                            "developer": parsed.get("developer", "")
+                        }
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    async def _query_gemini(prompt: str) -> Dict[str, str] | None:
+        """Queries Gemini Cloud API."""
         if not GEMINI_API_KEY:
-            return AIExplainer.generate_heuristic_summary(repo_name, stack, patterns, entry_points, len(files))
-
-        prompt = f"""
-Analyze this software repository based on its static code intelligence:
-- Repository Name: {repo_name}
-- Tech Stack: {', '.join(stack)}
-- Architectural Patterns: {', '.join(patterns)}
-- Entry Points: {', '.join(entry_points)}
-- Total Files: {len(files)}
-
-Provide three distinct architectural explanations in valid JSON with keys "beginner", "intermediate", and "developer":
-- "beginner": Use clear real-world analogies (like a restaurant, library, or airport). Avoid coding jargon.
-- "intermediate": Explain the flow of data, components, and responsibilities for a software engineer.
-- "developer": Technical breakdown of entrypoints, control flow, service boundaries, and state mutations.
-Output only valid JSON.
-"""
+            return None
         url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"response_mime_type": "application/json"}
         }
-
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 res = await client.post(url, json=payload)
@@ -97,6 +100,47 @@ Output only valid JSON.
                     }
         except Exception:
             pass
+        return None
+
+    @staticmethod
+    async def explain_repository(
+        repo_name: str,
+        stack: List[str],
+        patterns: List[str],
+        entry_points: List[str],
+        files: List[FileMeta]
+    ) -> Dict[str, str]:
+        """
+        Explains repository using:
+        1. Local Ollama (e.g. qwen2.5-coder:7b) if AI_PROVIDER in ('auto', 'ollama')
+        2. Gemini API if configured & Ollama not used/failed
+        3. Deterministic AST heuristics fallback
+        """
+        prompt = f"""
+Analyze this software repository based on its static code intelligence:
+- Repository Name: {repo_name}
+- Tech Stack: {', '.join(stack)}
+- Architectural Patterns: {', '.join(patterns)}
+- Entry Points: {', '.join(entry_points)}
+- Total Files: {len(files)}
+
+Return a JSON object with keys "beginner", "intermediate", and "developer":
+- "beginner": Clear real-world analogy (restaurant, airport, transit hub). No jargon.
+- "intermediate": Software engineer breakdown of layers, entrypoints, and flow.
+- "developer": Technical breakdown of boundaries, calls, state mutations, and concurrency.
+Return only valid JSON.
+"""
+        # Try local Ollama first
+        if AI_PROVIDER in ("auto", "ollama"):
+            result = await AIExplainer._query_ollama(prompt)
+            if result:
+                return result
+
+        # Try Gemini if Ollama wasn't available or failed
+        if AI_PROVIDER in ("auto", "gemini") and GEMINI_API_KEY:
+            result = await AIExplainer._query_gemini(prompt)
+            if result:
+                return result
 
         return AIExplainer.generate_heuristic_summary(repo_name, stack, patterns, entry_points, len(files))
 
@@ -131,4 +175,3 @@ Output only valid JSON.
             "intermediate": intermediate,
             "developer": developer
         }
-

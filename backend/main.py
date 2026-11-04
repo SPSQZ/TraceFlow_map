@@ -130,7 +130,7 @@ async def run_analysis_pipeline(analysis_id: str, req: RepoAnalyzeRequest):
         analysis["issues"] = analytics
 
         # Step 7: Build the 3 Graph Views
-        arch_graph = GraphEngine.build_architecture_view(files_meta, resolved_imports)
+        arch_graph = GraphEngine.build_architecture_view(files_meta, resolved_imports, analytics["circular_dependencies"])
         dep_graph = GraphEngine.build_dependency_view(files_meta, resolved_imports, analytics["circular_dependencies"])
         flow_graph = GraphEngine.build_flow_view(flow_traces, 0)
 

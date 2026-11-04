@@ -3,76 +3,135 @@ from ..models.schemas import GraphNode, GraphEdge, GraphResponse, FileMeta
 
 class GraphEngine:
     @staticmethod
-    def build_architecture_view(files: List[FileMeta], resolved_imports: List[Dict[str, Any]]) -> GraphResponse:
+    def build_architecture_view(
+        files: List[FileMeta],
+        resolved_imports: List[Dict[str, Any]],
+        circular_cycles: List[List[str]] = []
+    ) -> GraphResponse:
         """
-        Mode 1: High-level architectural view.
+        Mode 1: High-level architectural view with swimlane containers and nested files.
         Tiers:
-          - Client Layer (Web / Mobile)
-          - Gateway / Routing Layer
+          - Client Layer (Frontend)
+          - Gateway Layer (API & Routing)
           - Service Layer (Business Logic)
-          - Data Layer (Databases / Schemas / Models)
-          - Utilities & Config
+          - Data Layer (Databases & Persistence)
+          - Utility Layer (Config & Helpers)
         """
         tier_order = ["Client", "Gateway", "Service", "Data", "Utility"]
-        tier_names = {
-            "client": "Client Layer (Frontend)",
-            "gateway": "API Gateway & Routing",
-            "service": "Service & Business Logic",
-            "data": "Data & Persistence Layer",
-            "util": "Utilities & Helpers",
-            "config": "Config & Manifests",
+        tier_subtitles = {
+            "Client": "Frontend UI components & client fetchers",
+            "Gateway": "API Gateway, route listeners & request controllers",
+            "Service": "Domain business logic & core microservices",
+            "Data": "Data models, schemas & persistence repositories",
+            "Utility": "Shared utilities, configs & build manifests",
         }
 
-        tier_nodes = {}
-        tier_counts = {t: 0 for t in tier_order}
-        tier_files: Dict[str, List[str]] = {t: [] for t in tier_order}
+        cyclic_files = {item for cycle in circular_cycles for item in cycle}
+        tier_files: Dict[str, List[FileMeta]] = {t: [] for t in tier_order}
 
         for f in files:
             layer_cap = f.layer.capitalize()
             if layer_cap not in tier_order:
-                layer_cap = "Service"
-            tier_counts[layer_cap] += 1
-            tier_files[layer_cap].append(f.path)
+                layer_cap = "Service" if f.layer != "config" else "Utility"
+            tier_files[layer_cap].append(f)
 
         nodes: List[GraphNode] = []
-        # Create a visual node for each tier that has files
-        for idx, tier in enumerate(tier_order):
-            if tier_counts[tier] > 0 or tier in ["Client", "Gateway", "Service", "Data"]:
-                node_id = f"tier_{tier.lower()}"
-                desc = f"{tier_counts[tier]} modules / components"
+
+        # 1. Add Tier Group Container Nodes
+        for tier in tier_order:
+            flist = tier_files[tier]
+            if len(flist) > 0 or tier in ["Client", "Gateway", "Service", "Data"]:
+                folders = sorted(list({
+                    "/".join(f.path.split("/")[:-1])
+                    for f in flist
+                    if "/" in f.path
+                }))
+                if not folders and flist:
+                    folders = ["root"]
+
                 nodes.append(
                     GraphNode(
-                        id=node_id,
-                        type="tierNode",
-                        label=f"{tier} Tier",
+                        id=f"tier_group_{tier.lower()}",
+                        type="tierGroupNode",
+                        label=f"{tier} Layer",
                         tier=tier,
                         data={
                             "title": f"{tier} Layer",
-                            "subtitle": desc,
-                            "file_count": tier_counts[tier],
-                            "sample_files": tier_files[tier][:4],
-                            "tier_type": tier.lower()
+                            "subtitle": tier_subtitles.get(tier, f"{tier} components"),
+                            "tier_type": tier.lower(),
+                            "folders": folders,
+                            "file_count": len(flist)
                         }
                     )
                 )
 
-        # Inter-tier connections
-        edges: List[GraphEdge] = [
-            GraphEdge(id="e_client_gateway", source="tier_client", target="tier_gateway", type="ROUTES_TO", label="HTTP Requests", animated=True),
-            GraphEdge(id="e_gateway_service", source="tier_gateway", target="tier_service", type="CALLS", label="Dispatches Business Logic", animated=True),
-            GraphEdge(id="e_service_data", source="tier_service", target="tier_data", type="READS_WRITES", label="Queries & Persists", animated=True),
-            GraphEdge(id="e_service_util", source="tier_service", target="tier_utility", type="USES", label="Shared Utilities", animated=False),
-        ]
+        # 2. Add individual File Nodes inside each tier
+        for tier in tier_order:
+            for f in tier_files[tier]:
+                is_cyclic = f.path in cyclic_files
+                folder = "/".join(f.path.split("/")[:-1]) if "/" in f.path else "."
+                nodes.append(
+                    GraphNode(
+                        id=f.path,
+                        type="fileNode",
+                        label=f.path.split("/")[-1],
+                        tier=tier,
+                        file=f.path,
+                        data={
+                            "path": f.path,
+                            "filename": f.path.split("/")[-1],
+                            "folder": folder,
+                            "language": f.language,
+                            "layer": f.layer,
+                            "lines": f.lines,
+                            "is_cyclic": is_cyclic,
+                            "size": f.size,
+                            "tier": tier
+                        }
+                    )
+                )
 
-        # Filter edges to only exist if both source and target exist
-        existing_ids = {n.id for n in nodes}
-        valid_edges = [e for e in edges if e.source in existing_ids and e.target in existing_ids]
+        # 3. Add Edges between files (both intra-layer and inter-layer!)
+        edges: List[GraphEdge] = []
+        edge_set = set()
+        file_tier_map = {f.path: f.layer.capitalize() for f in files}
+
+        for imp in resolved_imports:
+            src = imp.get("from_file")
+            tgt = imp.get("target_file")
+            if src and tgt and src in file_tier_map and tgt in file_tier_map and src != tgt:
+                edge_key = (src, tgt)
+                if edge_key not in edge_set:
+                    edge_set.add(edge_key)
+                    src_tier = file_tier_map[src]
+                    tgt_tier = file_tier_map[tgt]
+                    is_inter_tier = (src_tier != tgt_tier)
+                    is_cycle_edge = (src in cyclic_files and tgt in cyclic_files)
+
+                    edge_label = imp.get("symbol") or ("calls" if is_inter_tier else "imports")
+
+                    edges.append(
+                        GraphEdge(
+                            id=f"arch_e_{src}_{tgt}".replace("/", "_").replace(".", "_"),
+                            source=src,
+                            target=tgt,
+                            type="ROUTES_TO" if is_inter_tier else "IMPORTS",
+                            label=edge_label,
+                            animated=is_inter_tier or is_cycle_edge,
+                            line=imp.get("line")
+                        )
+                    )
 
         return GraphResponse(
             nodes=nodes,
-            edges=valid_edges,
+            edges=edges,
             mode="architecture",
-            metrics={"total_tiers": len(nodes), "total_files": len(files)}
+            metrics={
+                "total_tiers": len([t for t in tier_order if tier_files[t]]),
+                "total_files": len(files),
+                "intra_layer_edges": len([e for e in edges if not e.animated]),
+                "inter_layer_edges": len([e for e in edges if e.animated])
+            }
         )
 
     @staticmethod
@@ -85,7 +144,6 @@ class GraphEngine:
         Mode 2: Dependency view showing file-to-file imports and module connections.
         """
         nodes: List[GraphNode] = []
-        # Set of files involved in circular dependencies
         cyclic_files = set()
         for cycle in circular_cycles:
             for item in cycle:
@@ -125,10 +183,9 @@ class GraphEngine:
                 edge_key = (src, tgt)
                 if edge_key not in edge_set:
                     edge_set.add(edge_key)
-                    
-                    # Highlight cycle edges in red
+
                     is_cycle_edge = (src in cyclic_files and tgt in cyclic_files)
-                    
+
                     edges.append(
                         GraphEdge(
                             id=f"e_{src}_{tgt}".replace("/", "_").replace(".", "_"),
@@ -207,4 +264,3 @@ class GraphEngine:
                 "total_steps": len(steps)
             }
         )
-

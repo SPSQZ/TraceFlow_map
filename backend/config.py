@@ -12,8 +12,18 @@ SAMPLE_REPO_DIR = BASE_DIR / "sample_repo"
 
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 
+# AI Provider Configuration
+# "auto" (tries Ollama first, then Gemini, then AST heuristics)
+AI_PROVIDER = os.environ.get("AI_PROVIDER", "auto").strip().lower()
+
+# Local Ollama Configuration
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:7b").strip()
+
+# Gemini Cloud API Configuration
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-# Use 8005 by default to prevent conflicts with services running on default port 8000
+
+# Server Port (8005)
 PORT = int(os.environ.get("PORT", 8005))
 HOST = os.environ.get("HOST", "0.0.0.0")
 

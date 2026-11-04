@@ -37,6 +37,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<"inspect" | "code" | "chat">("inspect");
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [backendOffline, setBackendOffline] = useState(false);
 
   // Poll analysis status until completed
   const pollAnalysis = async (id: string) => {
@@ -97,10 +98,12 @@ export function App() {
       const res = isLocal
         ? await startAnalysis(undefined, false, target)
         : await startAnalysis(target, false, undefined);
+      setBackendOffline(false);
       pollAnalysis(res.id);
     } catch (err: any) {
       setIsLoading(false);
-      alert("Error starting analysis: " + err.message);
+      setBackendOffline(true);
+      console.error("Error starting analysis:", err);
     }
   };
 
@@ -109,10 +112,12 @@ export function App() {
     try {
       setIsLoading(true);
       const res = await startAnalysis(undefined, true);
+      setBackendOffline(false);
       pollAnalysis(res.id);
     } catch (err: any) {
       setIsLoading(false);
-      alert("Error loading sample: " + err.message);
+      setBackendOffline(true);
+      console.error("Error loading sample:", err);
     }
   };
 
@@ -124,20 +129,29 @@ export function App() {
       try {
         const gr = await fetchGraph(analysisId, mode, selectedFlowIndex);
         setGraphData(gr);
+        setBackendOffline(false);
+      } catch (err: any) {
+        console.error("Failed to fetch mode graph:", err);
+        setBackendOffline(true);
       } finally {
         setIsLoading(false);
       }
+    } else {
+      handleLoadSample();
     }
   };
 
   // Select flow index in Mode 3
   const handleSelectFlowIndex = async (index: number) => {
     setSelectedFlowIndex(index);
-    if (analysisId && currentMode === "flow") {
+    if (analysisId) {
       setIsLoading(true);
       try {
         const gr = await fetchGraph(analysisId, "flow", index);
         setGraphData(gr);
+        setBackendOffline(false);
+      } catch (err: any) {
+        console.error("Failed to fetch flow graph:", err);
       } finally {
         setIsLoading(false);
       }
@@ -179,6 +193,28 @@ export function App() {
         onSelectFlowIndex={handleSelectFlowIndex}
         onExport={() => setIsExportOpen(true)}
       />
+
+      {/* Backend Offline Warning Banner */}
+      {backendOffline && (
+        <div className="w-full bg-rose-500/15 border-b border-rose-500/40 px-4 py-2 flex items-center justify-between text-xs text-rose-300 z-30">
+          <div className="flex items-center space-x-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />
+            <span>
+              <strong>Backend Disconnected:</strong> FastAPI server is not detected on port 8005. Please run{" "}
+              <code className="bg-slate-900 px-1.5 py-0.5 rounded text-white font-mono border border-slate-700">
+                python run.py
+              </code>{" "}
+              in your terminal.
+            </span>
+          </div>
+          <button
+            onClick={handleLoadSample}
+            className="px-3 py-1 rounded bg-rose-500 hover:bg-rose-400 text-slate-950 font-bold text-[11px] transition-all shrink-0"
+          >
+            Retry Connection
+          </button>
+        </div>
+      )}
 
       {/* Progress Bar when analyzing */}
       {status && status.status !== "completed" && status.status !== "failed" && (

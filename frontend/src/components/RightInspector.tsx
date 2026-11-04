@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   FileText,
   Code,
@@ -7,10 +7,13 @@ import {
   ExternalLink,
   Layers,
   Send,
-  User,
   Bot,
   CornerDownRight,
-  ChevronRight,
+  X,
+  Maximize2,
+  Minimize2,
+  GripVertical,
+  ChevronLeft,
 } from "lucide-react";
 import { FileDetails, ChatMessage } from "../types";
 import { askQuestion } from "../api";
@@ -23,6 +26,10 @@ interface Props {
   activeTab: "inspect" | "code" | "chat";
   onTabChange: (tab: "inspect" | "code" | "chat") => void;
 }
+
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 900;
+const DEFAULT_WIDTH = 384;
 
 export const RightInspector: React.FC<Props> = ({
   analysisId,
@@ -42,7 +49,55 @@ export const RightInspector: React.FC<Props> = ({
   ]);
   const [inputQuery, setInputQuery] = useState("");
   const [isAsking, setIsAsking] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // ── Panel width (drag-to-resize) ────────────────────────────────────────
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartW = useRef(DEFAULT_WIDTH);
+
+  // ── Popout / Fullscreen modal ────────────────────────────────────────────
+  const [isPopout, setIsPopout] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, isAsking]);
+
+  // ── Drag Resize Handlers ─────────────────────────────────────────────────
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartW.current = panelWidth;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+  }, [panelWidth]);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = dragStartX.current - e.clientX; // drag left = wider
+      const newW = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartW.current + delta));
+      setPanelWidth(newW);
+    };
+    const onUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, []);
+
+  // ── Chat Send ─────────────────────────────────────────────────────────────
   const handleSendChat = async (queryText?: string) => {
     const q = queryText || inputQuery;
     if (!q.trim() || !analysisId) return;
@@ -68,7 +123,7 @@ export const RightInspector: React.FC<Props> = ({
         referenced_symbols: res.referenced_symbols,
       };
       setChatMessages((prev) => [...prev, aiMsg]);
-    } catch (err: any) {
+    } catch {
       setChatMessages((prev) => [
         ...prev,
         {
@@ -82,53 +137,83 @@ export const RightInspector: React.FC<Props> = ({
     }
   };
 
-  return (
-    <aside className="w-96 border-l border-slate-800 bg-[#0B0F17]/95 flex flex-col h-[calc(100vh-4rem)] z-10 select-none">
+  // ── Collapsed state: show only a thin tab bar ─────────────────────────────
+  if (isCollapsed) {
+    return (
+      <div className="relative flex flex-col items-center w-10 h-[calc(100vh-4rem)] border-l border-slate-800 bg-[#0B0F17]/95 z-10 select-none">
+        <button
+          onClick={() => setIsCollapsed(false)}
+          title="Expand Panel"
+          className="mt-3 p-1.5 rounded-lg text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition-all"
+        >
+          <ChevronLeft size={16} className="rotate-180" />
+        </button>
+        {["inspect", "code", "chat"].map((t) => (
+          <button
+            key={t}
+            onClick={() => { setIsCollapsed(false); onTabChange(t as any); }}
+            title={t.charAt(0).toUpperCase() + t.slice(1)}
+            className={`mt-2 p-1.5 rounded-lg transition-all ${
+              activeTab === t ? "text-cyan-400 bg-slate-800" : "text-slate-500 hover:text-white"
+            }`}
+          >
+            {t === "inspect" && <FileText size={15} />}
+            {t === "code" && <Code size={15} />}
+            {t === "chat" && <MessageSquare size={15} />}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Inner panel content (shared between sidebar & popout) ─────────────────
+  const PanelContent = () => (
+    <>
       {/* Tab Navigation */}
-      <div className="h-11 border-b border-slate-800 flex items-center px-3 bg-slate-900/60">
-        <button
-          onClick={() => onTabChange("inspect")}
-          className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
-            activeTab === "inspect"
-              ? "bg-slate-800 text-cyan-400 shadow"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <FileText size={13} />
-          <span>Inspector</span>
-        </button>
+      <div className="h-11 border-b border-slate-800 flex items-center px-2 bg-slate-900/60 shrink-0">
+        {(["inspect", "code", "chat"] as const).map((tab, i) => {
+          const labels = ["Inspector", "Code Viewer", "Ask AI"];
+          const icons = [<FileText size={13} />, <Code size={13} />, <MessageSquare size={13} />];
+          return (
+            <button
+              key={tab}
+              onClick={() => onTabChange(tab)}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
+                activeTab === tab
+                  ? "bg-slate-800 text-cyan-400 shadow"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              {icons[i]}
+              <span>{labels[i]}</span>
+            </button>
+          );
+        })}
 
-        <button
-          onClick={() => onTabChange("code")}
-          className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
-            activeTab === "code"
-              ? "bg-slate-800 text-cyan-400 shadow"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <Code size={13} />
-          <span>Code Viewer</span>
-        </button>
-
-        <button
-          onClick={() => onTabChange("chat")}
-          className={`flex-1 py-1.5 text-xs font-semibold rounded-md flex items-center justify-center space-x-1.5 transition-all ${
-            activeTab === "chat"
-              ? "bg-slate-800 text-cyan-400 shadow"
-              : "text-slate-400 hover:text-white"
-          }`}
-        >
-          <MessageSquare size={13} />
-          <span>Ask AI</span>
-        </button>
+        {/* Collapse / Expand / Popout controls */}
+        <div className="flex items-center space-x-1 ml-2 shrink-0">
+          <button
+            onClick={() => setIsPopout(!isPopout)}
+            title={isPopout ? "Dock panel" : "Pop out panel"}
+            className="p-1 rounded text-slate-500 hover:text-cyan-400 hover:bg-slate-800 transition-all"
+          >
+            {isPopout ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+          <button
+            onClick={() => setIsCollapsed(true)}
+            title="Collapse panel"
+            className="p-1 rounded text-slate-500 hover:text-cyan-400 hover:bg-slate-800 transition-all"
+          >
+            <ChevronLeft size={13} />
+          </button>
+        </div>
       </div>
 
-      {/* Tab 1: Node Inspector */}
+      {/* ── Tab 1: Node Inspector ─────────────────────────────────────────── */}
       {activeTab === "inspect" && (
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {fileDetails ? (
             <>
-              {/* File Header */}
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
                   Inspecting File
@@ -153,17 +238,13 @@ export const RightInspector: React.FC<Props> = ({
                       key={p}
                       onClick={() => setPersona(p)}
                       className={`py-1 rounded text-[10px] font-bold capitalize transition-all ${
-                        persona === p
-                          ? "bg-purple-600 text-white shadow"
-                          : "text-slate-400 hover:text-white"
+                        persona === p ? "bg-purple-600 text-white shadow" : "text-slate-400 hover:text-white"
                       }`}
                     >
                       {p}
                     </button>
                   ))}
                 </div>
-
-                {/* Persona-based explanation */}
                 <p className="mt-3 text-xs text-slate-300 leading-relaxed bg-slate-950/80 p-2.5 rounded-lg border border-slate-800">
                   {fileDetails.ai_explanation[persona] ||
                     fileDetails.ai_explanation.intermediate ||
@@ -171,7 +252,7 @@ export const RightInspector: React.FC<Props> = ({
                 </p>
               </div>
 
-              {/* Contained Symbols */}
+              {/* Symbols */}
               {fileDetails.symbols && fileDetails.symbols.length > 0 && (
                 <div>
                   <h4 className="text-xs font-bold text-slate-300 mb-2 flex items-center space-x-1.5">
@@ -188,12 +269,10 @@ export const RightInspector: React.FC<Props> = ({
                           <span className="font-mono text-cyan-300 font-semibold block truncate">
                             {sym.name}()
                           </span>
-                          <span className="text-[10px] text-slate-400 capitalize">
-                            {sym.kind}
-                          </span>
+                          <span className="text-[10px] text-slate-400 capitalize">{sym.kind}</span>
                         </div>
                         <span className="text-[10px] font-mono text-slate-400 shrink-0">
-                          L{sym.start_line}-{sym.end_line}
+                          L{sym.start_line}–{sym.end_line}
                         </span>
                       </div>
                     ))}
@@ -201,65 +280,50 @@ export const RightInspector: React.FC<Props> = ({
                 </div>
               )}
 
-              {/* Direct Dependencies */}
+              {/* Module Connections */}
               <div>
                 <h4 className="text-xs font-bold text-slate-300 mb-2 flex items-center space-x-1.5">
                   <Layers size={13} className="text-blue-400" />
                   <span>Module Connections</span>
                 </h4>
                 <div className="space-y-2">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                      Depends On ({fileDetails.outgoing_deps.length})
-                    </span>
-                    <div className="flex flex-wrap gap-1">
-                      {fileDetails.outgoing_deps.map((dep, i) => (
-                        <button
-                          key={i}
-                          onClick={() => onSelectNode(dep)}
-                          className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700/60 truncate max-w-[200px]"
-                        >
-                          {dep.split("/").pop()}
-                        </button>
-                      ))}
-                      {fileDetails.outgoing_deps.length === 0 && (
-                        <span className="text-[10px] text-slate-500 italic">None (Root leaf)</span>
-                      )}
+                  {[
+                    { label: "Depends On", deps: fileDetails.outgoing_deps, color: "text-slate-300" },
+                    { label: "Referenced By", deps: fileDetails.incoming_deps, color: "text-cyan-300" },
+                  ].map(({ label, deps, color }) => (
+                    <div key={label}>
+                      <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
+                        {label} ({deps.length})
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {deps.map((dep, i) => (
+                          <button
+                            key={i}
+                            onClick={() => onSelectNode(dep)}
+                            className={`text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 ${color} border border-slate-700/60 truncate max-w-[200px]`}
+                          >
+                            {dep.split("/").pop()}
+                          </button>
+                        ))}
+                        {deps.length === 0 && (
+                          <span className="text-[10px] text-slate-500 italic">None</span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-
-                  <div>
-                    <span className="text-[10px] uppercase font-bold text-slate-400 block mb-1">
-                      Referenced By ({fileDetails.incoming_deps.length})
-                    </span>
-                    <div className="flex flex-wrap gap-1">
-                      {fileDetails.incoming_deps.map((dep, i) => (
-                        <button
-                          key={i}
-                          onClick={() => onSelectNode(dep)}
-                          className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-cyan-300 border border-slate-700/60 truncate max-w-[200px]"
-                        >
-                          {dep.split("/").pop()}
-                        </button>
-                      ))}
-                      {fileDetails.incoming_deps.length === 0 && (
-                        <span className="text-[10px] text-slate-500 italic">No incoming calls</span>
-                      )}
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             </>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
               <FileText size={32} className="mb-2 text-slate-600" />
-              <p className="text-xs">Click on any node in the graph to inspect its architecture and dependencies.</p>
+              <p className="text-xs">Click any node in the graph to inspect its architecture and dependencies.</p>
             </div>
           )}
         </div>
       )}
 
-      {/* Tab 2: Code Viewer */}
+      {/* ── Tab 2: Code Viewer ───────────────────────────────────────────── */}
       {activeTab === "code" && (
         <div className="flex-1 overflow-y-auto p-3 font-mono text-[11px] leading-relaxed bg-[#06090F]">
           {fileDetails ? (
@@ -270,12 +334,10 @@ export const RightInspector: React.FC<Props> = ({
               </div>
               {fileDetails.content.split("\n").map((line, idx) => (
                 <div key={idx} className="flex hover:bg-slate-800/40 px-1 rounded">
-                  <span className="w-8 shrink-0 text-slate-600 select-none text-right pr-3">
+                  <span className="w-9 shrink-0 text-slate-600 select-none text-right pr-3">
                     {idx + 1}
                   </span>
-                  <span className="text-slate-200 whitespace-pre overflow-x-auto">
-                    {line || " "}
-                  </span>
+                  <span className="text-slate-200 whitespace-pre overflow-x-auto">{line || " "}</span>
                 </div>
               ))}
             </div>
@@ -287,11 +349,11 @@ export const RightInspector: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Tab 3: Ask Codebase Chat */}
+      {/* ── Tab 3: Ask AI Chat ───────────────────────────────────────────── */}
       {activeTab === "chat" && (
-        <div className="flex-1 flex flex-col h-[calc(100vh-6.75rem)]">
-          {/* Persona selector in chat */}
-          <div className="p-2 border-b border-slate-800 flex items-center justify-between bg-slate-900/40">
+        <div className="flex-1 flex flex-col min-h-0">
+          {/* Persona bar */}
+          <div className="p-2 border-b border-slate-800 flex items-center justify-between bg-slate-900/40 shrink-0">
             <span className="text-[10px] font-semibold text-slate-400">Response Level:</span>
             <div className="flex space-x-1">
               {(["beginner", "intermediate", "developer"] as const).map((p) => (
@@ -308,17 +370,15 @@ export const RightInspector: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Chat Messages */}
+          {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {chatMessages.map((msg) => (
               <div
                 key={msg.id}
-                className={`flex flex-col space-y-1 ${
-                  msg.sender === "user" ? "items-end" : "items-start"
-                }`}
+                className={`flex flex-col space-y-1 ${msg.sender === "user" ? "items-end" : "items-start"}`}
               >
                 <div
-                  className={`max-w-[90%] p-2.5 rounded-xl text-xs leading-relaxed ${
+                  className={`max-w-[92%] p-2.5 rounded-xl text-xs leading-relaxed ${
                     msg.sender === "user"
                       ? "bg-cyan-500 text-slate-950 font-medium rounded-br-none"
                       : "bg-slate-900 text-slate-200 border border-slate-800 rounded-bl-none"
@@ -326,8 +386,6 @@ export const RightInspector: React.FC<Props> = ({
                 >
                   {msg.text}
                 </div>
-
-                {/* Referenced Files Citations */}
                 {msg.referenced_files && msg.referenced_files.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1">
                     {msg.referenced_files.map((rf, idx) => (
@@ -351,10 +409,11 @@ export const RightInspector: React.FC<Props> = ({
                 <span>Traversing graph & generating explanation...</span>
               </div>
             )}
+            <div ref={chatEndRef} />
           </div>
 
-          {/* Quick Prompts */}
-          <div className="p-2 border-t border-slate-800/80 bg-slate-900/30 flex flex-wrap gap-1">
+          {/* Quick prompts */}
+          <div className="p-2 border-t border-slate-800/80 bg-slate-900/30 flex flex-wrap gap-1 shrink-0">
             {[
               "How does authentication work?",
               "Trace checkout order flow",
@@ -370,8 +429,8 @@ export const RightInspector: React.FC<Props> = ({
             ))}
           </div>
 
-          {/* Chat Input */}
-          <div className="p-3 border-t border-slate-800 bg-slate-900/60">
+          {/* Input */}
+          <div className="p-3 border-t border-slate-800 bg-slate-900/60 shrink-0">
             <div className="relative flex items-center">
               <input
                 type="text"
@@ -392,7 +451,74 @@ export const RightInspector: React.FC<Props> = ({
           </div>
         </div>
       )}
-    </aside>
+    </>
+  );
+
+  // ── POPOUT MODAL ─────────────────────────────────────────────────────────
+  if (isPopout) {
+    return (
+      <>
+        {/* Thin collapsed sidebar placeholder so layout doesn't shift */}
+        <div className="w-10 border-l border-slate-800 bg-[#0B0F17]/95 shrink-0" />
+
+        {/* Floating resizable modal */}
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-end p-4 pointer-events-none"
+        >
+          <div
+            style={{ width: `${panelWidth}px`, maxWidth: "95vw" }}
+            className="pointer-events-auto h-[calc(100vh-2rem)] bg-[#0B0F17] border border-slate-700 rounded-2xl shadow-2xl shadow-black/70 flex flex-col overflow-hidden"
+          >
+            {/* Popout drag handle strip + close */}
+            <div
+              className="h-7 bg-slate-900/80 border-b border-slate-800 flex items-center justify-between px-3 cursor-move shrink-0"
+              onMouseDown={onMouseDown}
+            >
+              <div className="flex items-center space-x-2 text-[10px] text-slate-500 font-mono">
+                <GripVertical size={12} />
+                <span>INSPECTOR — drag to resize</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={() => setIsPopout(false)}
+                  title="Dock panel"
+                  className="p-0.5 rounded text-slate-500 hover:text-cyan-400"
+                >
+                  <Minimize2 size={13} />
+                </button>
+                <button
+                  onClick={() => { setIsPopout(false); setIsCollapsed(true); }}
+                  title="Close"
+                  className="p-0.5 rounded text-slate-500 hover:text-rose-400"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+
+            <PanelContent />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ── DEFAULT SIDEBAR ───────────────────────────────────────────────────────
+  return (
+    <div className="flex h-[calc(100vh-4rem)] shrink-0" style={{ width: `${panelWidth}px` }}>
+      {/* Drag Resize Handle (left edge of panel) */}
+      <div
+        onMouseDown={onMouseDown}
+        title="Drag to resize"
+        className="w-1.5 cursor-col-resize hover:bg-cyan-500/40 bg-slate-800/60 transition-colors shrink-0 flex items-center justify-center group"
+      >
+        <GripVertical size={12} className="text-slate-700 group-hover:text-cyan-500 transition-colors" />
+      </div>
+
+      {/* Panel Body */}
+      <aside className="flex-1 border-l border-slate-800 bg-[#0B0F17]/95 flex flex-col z-10 select-none overflow-hidden">
+        <PanelContent />
+      </aside>
+    </div>
   );
 };
-
