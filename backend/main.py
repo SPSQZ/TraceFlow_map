@@ -1,4 +1,5 @@
 import os
+import sys
 import uuid
 import asyncio
 from pathlib import Path
@@ -8,17 +9,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from .config import PORT, HOST
-from .models.schemas import (
-    RepoAnalyzeRequest, AnalysisStatus, OverviewResponse, GraphResponse,
-    IssuesResponse, AskRequest, AskResponse, TraceRequest, TraceResponse
-)
-from .storage.store import store
-from .services import (
-    GitHubService, RepoScanner, StackDetector, ParserEngine,
-    ImportResolver, CallGraphEngine, DataflowEngine, GraphEngine,
-    GraphAnalyzer, AIExplainer, GraphQA
-)
+# Ensure parent directory and backend directory are in sys.path
+# so both 'uvicorn backend.main:app' and 'cd backend && uvicorn main:app' work seamlessly
+CURRENT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = CURRENT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+if str(CURRENT_DIR) not in sys.path:
+    sys.path.insert(0, str(CURRENT_DIR))
+
+try:
+    from backend.config import PORT, HOST
+    from backend.models.schemas import (
+        RepoAnalyzeRequest, AnalysisStatus, OverviewResponse, GraphResponse,
+        IssuesResponse, AskRequest, AskResponse, TraceRequest, TraceResponse
+    )
+    from backend.storage.store import store
+    from backend.services import (
+        GitHubService, RepoScanner, StackDetector, ParserEngine,
+        ImportResolver, CallGraphEngine, DataflowEngine, GraphEngine,
+        GraphAnalyzer, AIExplainer, GraphQA
+    )
+except ImportError:
+    from config import PORT, HOST
+    from models.schemas import (
+        RepoAnalyzeRequest, AnalysisStatus, OverviewResponse, GraphResponse,
+        IssuesResponse, AskRequest, AskResponse, TraceRequest, TraceResponse
+    )
+    from storage.store import store
+    from services import (
+        GitHubService, RepoScanner, StackDetector, ParserEngine,
+        ImportResolver, CallGraphEngine, DataflowEngine, GraphEngine,
+        GraphAnalyzer, AIExplainer, GraphQA
+    )
 
 app = FastAPI(
     title="TraceFlow Map API",
