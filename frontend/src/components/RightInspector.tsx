@@ -167,7 +167,7 @@ export const RightInspector: React.FC<Props> = ({
   }
 
   // ── Inner panel content (shared between sidebar & popout) ─────────────────
-  const PanelContent = () => (
+  const renderPanelContent = () => (
     <>
       {/* Tab Navigation */}
       <div className="h-11 border-b border-slate-800 flex items-center px-2 bg-slate-900/60 shrink-0">
@@ -496,7 +496,7 @@ export const RightInspector: React.FC<Props> = ({
               </div>
             </div>
 
-            <PanelContent />
+            {renderPanelContent()}
           </div>
         </div>
       </>
@@ -517,7 +517,7 @@ export const RightInspector: React.FC<Props> = ({
 
       {/* Panel Body */}
       <aside className="flex-1 border-l border-slate-800 bg-[#0B0F17]/95 flex flex-col z-10 select-none overflow-hidden">
-        <PanelContent />
+        {renderPanelContent()}
       </aside>
     </div>
   );
